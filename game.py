@@ -13,6 +13,10 @@ class State:
         self.curPlayer = 1
         self.boardHash = None
         self.gameEnd = False
+        self.winReward = 1
+        self.drawReward = 0
+        self.loseReward = -1
+        self.wrongMoveReward = -1000
 
     def reset(self):
         self.board.fill(0)
@@ -55,10 +59,12 @@ class State:
         return self.boardHash
     
     def makeMove(self, move):
+        if move not in self.availPos():
+            return -1
         row, col = move
         self.board[row][col] = self.curPlayer
-        self.curPlayer *= -1
         self.updateBoardHash()
+        return 1
         
     def printBoard(self):
         clear_terminal()
@@ -78,14 +84,21 @@ class State:
     def game(self):
         while not self.gameEnd:
             move = self.p1.chooseAction(self) if self.curPlayer == 1 else self.p2.chooseAction(self)
-            self.makeMove(move)
+            checkValidMove = self.makeMove(move)
+            if checkValidMove == -1:
+                if self.curPlayer == 1:
+                    self.p1.updateQTable(self, move, self.wrongMoveReward)
+                else:
+                    self.p2.updateQTable(self, move, self.wrongMoveReward)
+                self.gameEnd = True
+                break
             win = self.checkWin()
             if win == 1 or win == -1:
+                self.gameEnd = True
                 # do stuff here
-                break
             elif win == 0:
+                self.gameEnd = True
                 # do stuff here
-                break
 
 class Player:
     def __init__(self, alpha=0.2, gamma=0.8, epsilon=0.2):
@@ -95,32 +108,37 @@ class Player:
         self.epsilon = epsilon
 
     def getQVals(self, state):
-        stateVal = state.updateBoardHash()
-        if stateVal not in self.qTable:
-            self.qTable[stateVal] = np.zeros(9)
-        return self.qTable[stateVal]
+        stateHash = state.updateBoardHash()
+        if stateHash not in self.qTable:
+            self.qTable[stateHash] = np.zeros(3,3)
+        return self.qTable[stateHash]
     
-    def chooseMove(self, state):
+    def chooseAction(self, state):
         validMoves = state.availPos()
         if random.uniform(0,1) < self.epsilon:
             return random.choice(validMoves)
-        qVals = self.getQ(state)
-        return divmod(np.argmax(qVals), 3)
+        qVals = self.getQVals(state)
+        return np.argmax(qVals) # maybe issue with tuple output
     
-    def updateQTable(self, state, action, reward, nextState):
-        qVals = self.getQ(state)
-        nextQVals = self.getQ(nextState)
+    # this all needs work
+    def updateQTable(self, state, action, reward, res = None):
+        qVals = self.getQVals(state)
         row, col = action
-        index = row*3 + col
-        qVals[index] += self.alpha * (reward + self.gamma*np.max(nextQVals) - qVals[index])
-
-    def chooseAction(self, state: State, reward):
-        action = self.chooseMove(state)
+        if res != None:
+            qVals[row][col] += self.alpha * (reward - qVals[row][col])
+            return
         nextState = state.copy()
         nextState.makeMove(action)
-        self.updateQTable(state, action, reward, nextState)
-        return action
-    
+        nextQVals = self.getQVals(nextState)
+        qVals[row][col] += self.alpha * (reward + self.gamma*np.max(nextQVals) - qVals[row][col])
+
+    def saveQTable(self):
+        with open("qTable.txt", "a") as f:
+            f.write("begin\n")
+            for i in self.qTable:
+                f.write(f"{i} {self.qTable[i]}\n")
+            f.write("end\n")
+
 
 class HumanPlayer:
     def __init__(self):
@@ -129,7 +147,7 @@ class HumanPlayer:
     def chooseAction(self, state):
         validMoves = state.availPos()
         while True:
-            move = input("Enter your move: ")
+            move = input("Enter your move: (a,b)")
             move = move.split(',')
             move = (int(move[0]), int(move[1]))
             if move in validMoves:
